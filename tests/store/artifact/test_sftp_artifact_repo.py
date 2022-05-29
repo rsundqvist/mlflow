@@ -1,21 +1,26 @@
 import pytest
 from tempfile import NamedTemporaryFile
+
+import mlflow.sklearn
 from mlflow.store.artifact.artifact_repository_registry import get_artifact_repository
 from mlflow.store.artifact.sftp_artifact_repo import SFTPArtifactRepository
 from mlflow.utils.file_utils import TempDir
 import os
 import posixpath
 
-
 pytestmark = pytest.mark.requires_ssh
+
+# import getpass  # very safety
+# auth = f"{getpass.getuser()}:{getpass.getuser()}@localhost:"  # much secure
+auth = ""
 
 
 def test_artifact_uri_factory(tmp_path):
-    assert isinstance(get_artifact_repository(f"sftp://{tmp_path}"), SFTPArtifactRepository)
+    assert isinstance(get_artifact_repository(f"sftp://{auth}{tmp_path}"), SFTPArtifactRepository)
 
 
 def test_list_artifacts_empty(tmp_path):
-    repo = SFTPArtifactRepository(f"sftp://{tmp_path}")
+    repo = SFTPArtifactRepository(f"sftp://{auth}{tmp_path}")
     assert repo.list_artifacts() == []
 
 
@@ -27,7 +32,7 @@ def test_list_artifacts(tmp_path, artifact_path):
     tmp_path.joinpath(artifact_path or "", file_path).write_text("test")
     tmp_path.joinpath(artifact_path or "", dir_path).mkdir()
 
-    repo = SFTPArtifactRepository(f"sftp://{tmp_path}")
+    repo = SFTPArtifactRepository(f"sftp://{auth}{tmp_path}")
     artifacts = repo.list_artifacts(path=artifact_path)
     assert len(artifacts) == 2
     assert artifacts[0].path == posixpath.join(artifact_path or "", file_path)
@@ -45,7 +50,7 @@ def test_log_artifact(artifact_path):
         local.write(file_content)
         local.flush()
 
-        sftp_path = "sftp://" + remote.path()
+        sftp_path = f"sftp://{auth}" + remote.path()
         store = SFTPArtifactRepository(sftp_path)
         store.log_artifact(local.name, artifact_path)
 
@@ -75,7 +80,7 @@ def test_log_artifacts(artifact_path):
         with open(os.path.join(local.path(), directory, file2), "wb") as f:
             f.write(file_content_2)
 
-        sftp_path = "sftp://" + remote.path()
+        sftp_path = f"sftp://{auth}" + remote.path()
         store = SFTPArtifactRepository(sftp_path)
         store.log_artifacts(local.path(), artifact_path)
 
@@ -99,7 +104,7 @@ def test_delete_artifact(artifact_path):
         local.write(file_content)
         local.flush()
 
-        sftp_path = f"sftp://{remote.path()}"
+        sftp_path = f"sftp://{auth}{remote.path()}"
         store = SFTPArtifactRepository(sftp_path)
         store.log_artifact(local.name, artifact_path)
 
@@ -134,7 +139,7 @@ def test_delete_artifacts(artifact_path):
         with open(os.path.join(local.path(), directory, file2), "wb") as f:
             f.write(file_content_2)
 
-        sftp_path = f"sftp://{remote.path()}"
+        sftp_path = f"sftp://{auth}{remote.path()}"
         store = SFTPArtifactRepository(sftp_path)
         store.log_artifacts(local.path(), artifact_path)
 
@@ -174,7 +179,7 @@ def test_delete_selective_artifacts(artifact_path):
         with open(os.path.join(local.path(), directory, file2), "wb") as f:
             f.write(file_content_2)
 
-        sftp_path = f"sftp://{remote.path()}"
+        sftp_path = f"sftp://{auth}{remote.path()}"
         store = SFTPArtifactRepository(sftp_path)
         store.log_artifacts(local.path(), artifact_path)
 
@@ -196,3 +201,17 @@ def test_delete_selective_artifacts(artifact_path):
         assert not posixpath.exists(posixpath.join(remote_dir, file1))
         assert posixpath.isfile(posixpath.join(remote_dir, directory, file2))
         assert posixpath.isdir(remote_dir)
+
+
+def test_download_sklearn():
+    with TempDir() as remote:
+        experiment_id = mlflow.create_experiment(
+            "sklearn-model-experiment", artifact_location=f"sftp://{auth}{remote.path()}"
+        )
+
+        with mlflow.start_run(experiment_id=experiment_id):
+            original = {"not": "a", "real": "model"}
+            model_uri = mlflow.sklearn.log_model(original, "model").model_uri
+            downloaded = mlflow.sklearn.load_model(model_uri)
+            # print(f"model_uri={model_uri}", "sftp" in model_uri)
+            assert downloaded == original
